@@ -1,4 +1,4 @@
-export const metadata = { title: "RPS • ML", description: "Rock • Paper • Scissors • Mind Game" };
+﻿export const metadata = { title: "Rock Paper Scissor Mind Game", description: "A hybrid learner with smart prompts and psychology bluff." };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
@@ -6,3 +6,4 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
+
