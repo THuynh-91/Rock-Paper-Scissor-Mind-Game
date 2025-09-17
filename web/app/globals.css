@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Page background & typography tweaks */
+:root { color-scheme: dark; }
+html, body { height: 100%; }
+body {
+  @apply bg-slate-950 text-slate-100;
+  background-image:
+    radial-gradient(1000px 600px at 10% -20%, rgba(99,102,241,0.12), transparent 60%),
+    radial-gradient(900px 500px at 110% 0%, rgba(56,189,248,0.10), transparent 60%),
+    radial-gradient(600px 400px at 50% 120%, rgba(16,185,129,0.10), transparent 60%);
+}
+
+/* Pretty cards */
+.card {
+  @apply rounded-2xl border border-slate-800/60 bg-slate-900/60 backdrop-blur supports-[backdrop-filter]:bg-slate-900/50 shadow-[0_6px_30px_-12px_rgba(0,0,0,0.6)];
+}
+
+/* Uniform move buttons */
+.move-btn {
+  @apply group aspect-square w-full max-w-40 rounded-3xl border border-slate-800 bg-slate-100 text-slate-900
+         hover:bg-white active:scale-[0.98] shadow hover:shadow-lg transition-all;
+}
+.move-icon-wrap {
+  @apply w-16 h-16 rounded-full ring-1 ring-slate-300 bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center;
+}
+.move-icon {
+  width: 34px; height: 34px; display:block;
+}

@@ -1,0 +1,137 @@
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+from typing import List, Literal, Optional
+import numpy as np
+import tensorflow as tf
+import os
+
+Move = Literal["Rock","Paper","Scissors"]
+Outcome = Literal["W","L","D"]
+MOVES = ["Rock","Paper","Scissors"]
+OUTS  = ["W","L","D"]
+
+def one_hot(idx:int, size:int):
+    v = np.zeros(size, dtype=np.float32)
+    if 0 <= idx < size:
+        v[idx] = 1.0
+    return v
+
+class PredictRequest(BaseModel):
+    context: List[Literal["Rock","Paper","Scissors","W","L","D"]] = Field(default_factory=list)
+    prompt_type: Optional[Literal["bot","you"]] = None
+    # if prompt_type == "you": client may send adherence score of the user (0..1) to indicate whether to trust prompt planning
+    adherence: Optional[float] = None
+
+class UpdateRequest(BaseModel):
+    context: List[Literal["Rock","Paper","Scissors","W","L","D"]] = Field(default_factory=list)
+    next_human_move: Move
+
+app = FastAPI(title="RPS-ML API", version="1.1")
+
+K = 3
+IN_SIZE = K * (3+3)
+MODEL_PATH = "model.h5"
+model: tf.keras.Model | None = None
+
+def build_model():
+    m = tf.keras.Sequential([
+        tf.keras.layers.Input(shape=(IN_SIZE,)),
+        tf.keras.layers.Dense(32, activation="relu"),
+        tf.keras.layers.Dense(3, activation="softmax"),
+    ])
+    m.compile(optimizer=tf.keras.optimizers.Adam(0.01),
+              loss=tf.keras.losses.CategoricalCrossentropy())
+    return m
+
+def ensure_model():
+    global model
+    if model is None:
+        if os.path.exists(MODEL_PATH):
+            try: model = tf.keras.models.load_model(MODEL_PATH)
+            except Exception: model = build_model()
+        else:
+            model = build_model()
+    return model
+
+def featurize(context: list) -> np.ndarray:
+    feats = []
+    i = 0
+    for _ in range(K):
+        mv = context[i] if i < len(context) else None; i += 1
+        oc = context[i] if i < len(context) else None; i += 1
+        mv_i = MOVES.index(mv) if mv in MOVES else -1
+        oc_i = OUTS.index(oc) if oc in OUTS else -1
+        feats.extend(one_hot(mv_i, 3))
+        feats.extend(one_hot(oc_i, 3))
+    return np.asarray(feats, dtype=np.float32).reshape(1, -1)
+
+def moves_from_context(context: list, max_pairs: int = 12) -> list[str]:
+    # context = [move0, outcome0, move1, outcome1, ...] most-recent-first
+    out = []
+    i = 0
+    for _ in range(max_pairs):
+        if i >= len(context): break
+        mv = context[i]; i += 2  # skip outcome
+        if mv in MOVES: out.append(mv)
+    return out
+
+def majority_dist(moves: list[str], laplace: float = 0.5):
+    cnt = {"Rock": laplace, "Paper": laplace, "Scissors": laplace}
+    for m in moves:
+        cnt[m] += 1.0
+    s = cnt["Rock"]+cnt["Paper"]+cnt["Scissors"]
+    return {k: cnt[k]/s for k in cnt}
+
+def streak_len(moves: list[str]) -> int:
+    if not moves: return 0
+    first = moves[0]; n = 0
+    for m in moves:
+        if m == first: n += 1
+        else: break
+    return n
+
+def beaten_by(a:str)->str: return "Paper" if a=="Rock" else ("Scissors" if a=="Paper" else "Rock")
+
+@app.post("/predict")
+def predict(req: PredictRequest):
+    m = ensure_model()
+
+    # 1) TF prediction
+    x = featurize(req.context)
+    y = m.predict(x, verbose=0)[0]
+    tf_probs = { MOVES[i]: float(y[i]) for i in range(3) }
+    tf_max = max(tf_probs.values())
+
+    # 2) Heuristics from recent human moves
+    recent_moves = moves_from_context(req.context, max_pairs=12)
+    fr_probs = majority_dist(recent_moves[:10])  # frequency over last 10
+    s_len = streak_len(recent_moves)            # how many same in a row at head
+
+    # 3) If very strong streak (>=5), override: predict that move
+    if s_len >= 5:
+        human_pred = recent_moves[0]
+        bot_move = beaten_by(human_pred)
+        return {"predicted_human": human_pred, "bot_move": bot_move,
+                "probs": tf_probs, "note": f"streak_override_{s_len}"}
+
+    # 4) Blend TF with frequency (adaptive weight): when TF is uncertain, trust frequency more
+    # weight for TF goes with confidence, frequency gets the rest
+    w_tf = min(1.0, max(0.3, tf_max))          # 0.3..1.0
+    w_fr = 1.0 - w_tf
+    blend = {k: w_tf*tf_probs[k] + w_fr*fr_probs[k] for k in MOVES}
+    human_pred = max(blend, key=blend.get)
+
+    # 5) If the UX prompt is "you will go X" but adherence is low, ignore the prompt planning
+    # (we still return a normal counter to predicted human)
+    bot_move = beaten_by(human_pred)
+    return {"predicted_human": human_pred, "bot_move": bot_move,
+            "probs": blend, "note": f"blend w_tf={w_tf:.2f}"}
+
+@app.post("/update")
+def update(req: UpdateRequest):
+    m = ensure_model()
+    x = featurize(req.context)
+    y = one_hot(MOVES.index(req.next_human_move), 3).reshape(1, -1)
+    m.fit(x, y, epochs=1, batch_size=1, verbose=0)
+    m.save(MODEL_PATH)
+    return {"status": "ok"}

@@ -1,0 +1,18 @@
+﻿services:
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    volumes:
+      - type: bind
+        source: ./api
+        target: /app
+  web:
+    build: ./web
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000
+      NODE_ENV: production
+    depends_on:
+      - api
