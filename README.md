@@ -92,15 +92,6 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ---
 
-## 🧪 Troubleshooting
-- **Blank page / 404 to API**: verify `web/.env.local` has the right `NEXT_PUBLIC_API_URL`
-- **Windows CRLF warnings**: safe to ignore. To silence: `git config core.autocrlf true`
-- **Port already in use**: close existing processes on 3000/8000 or change ports
-- **Compose “invalid mount path”**: ensure there is no dangling `docker-compose.override.yml` and your compose file uses valid relative binds (already set in this repo)
-
-
----
-
 ## 📄 License
 MIT — do what you like, a credit link is appreciated.
 
