@@ -105,8 +105,3 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 MIT — do what you like, a credit link is appreciated.
 
 
----
-
-## 📌 Resume-Ready Summary
-**Rock Paper Scissor Mind Game** – Built a full-stack interactive game with **FastAPI backend and Next.js frontend**, Dockerized for deployment. Implemented **adaptive prediction using statistical learning, streak detection, and ε-greedy exploration**, with smart psychological prompts. Integrated real-time API endpoints for prediction, online updates, and reset. Designed a modern responsive UI with Tailwind and image-based move selectors.  
-*Stack: Python (FastAPI, NumPy), TypeScript (Next.js, React, Tailwind), Docker.*
