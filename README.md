@@ -2,7 +2,7 @@
 
 An adaptive Rock–Paper–Scissors game with a clean Next.js UI and a FastAPI backend that learns from your behavior. The bot blends simple statistical learning with guardrail heuristics (streak detection, ε-greedy exploration) and only uses psychology prompts when it’s uncertain.<br>
 
-Site: https://rock-paper-scissor-mind-game-whc.vercel.app
+Site: https://rock-paper-scissor-mind-game.vercel.app
 
 ---
 
