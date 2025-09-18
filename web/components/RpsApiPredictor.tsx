@@ -374,7 +374,7 @@ export default function RpsApiPredictor() {
                 textAlign: 'center'
               }}>
                 <div style={{ marginBottom: '20px' }}>
-                  <div style={{ fontSize: '14px', color: '#c084fc', marginBottom: '10px' }}>AI PROMPT</div>
+                  <div style={{ fontSize: '14px', color: '#c084fc', marginBottom: '10px' }}>Bluff</div>
                   <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
                     {promptType === "bot" ? (
                       <>I will choose <span style={{ color: '#c084fc' }}>{botClaim}</span></>
