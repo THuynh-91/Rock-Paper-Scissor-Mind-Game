@@ -4,7 +4,7 @@ An adaptive Rock–Paper–Scissors game with a clean Next.js UI and a FastAPI b
 
 ---
 
-## ✨ Features
+##Features
 - Two modes:
   - **Random** – truly uniform randomness (no prompts, no learning)
   - **Psyche** – hybrid predictor (history frequency + streak counter + ε-greedy)
@@ -19,14 +19,14 @@ An adaptive Rock–Paper–Scissors game with a clean Next.js UI and a FastAPI b
 
 ---
 
-## 🧭 How it works
+##How it works
 The frontend sends recent context (sequence of your last moves + outcomes) to the API.  
 The API tracks simple **move frequencies** and applies **ε-greedy** exploration, detects **repeated-move streaks** and hard-counters them, and updates its counts online on every round.  
 Frontend decides when to show a **prompt** (uncertain model / small loss streak). You must answer the prompt before you can play that round.  
 
 ---
 
-## 🚀 How to Run
+##How to Run
 
 Requirements: **Docker Desktop**
 ```bash
@@ -37,7 +37,7 @@ docker compose up --build
 
 ---
 
-## 🖥️ UI Notes
+##UI Notes
 - **Reset button** sits above the header; flushes game + API state
 - **Win Rate** shows % and W / L / D (draws not counted in %)
 - **Random mode** is truly uniform – no prompts, no learning
@@ -46,7 +46,7 @@ docker compose up --build
 
 ---
 
-## ⚙️ Configuration
+##Configuration
 **File:** `web/.env.local`
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -57,7 +57,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ---
 
-## 🧱 Project scripts
+##Project scripts
 **Web**
 - `npm run dev` – Next.js dev server  
 - `npm run build` – production build  
