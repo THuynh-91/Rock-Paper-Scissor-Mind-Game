@@ -26,13 +26,8 @@ const beatenBy = (a: Move): Move =>
 const randMove = (): Move => MOVES[Math.floor(Math.random() * 3)];
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const EPSILON = 0.12; // only used in Psyche mode
+const EPSILON = 0.12;
 
-/* small reusable card style */
-const card =
-  "rounded-2xl border border-slate-800/60 bg-slate-900/60 backdrop-blur supports-[backdrop-filter]:bg-slate-900/50 shadow-[0_6px_30px_-12px_rgba(0,0,0,0.6)] p-4";
-
-/* ── Component ─────────────────────────────────────────────────────────── */
 export default function RpsApiPredictor() {
   const [mode, setMode] = React.useState<Mode>("psyche");
   const [round, setRound] = React.useState(1);
@@ -50,7 +45,6 @@ export default function RpsApiPredictor() {
     }[]
   >([]);
 
-  // prompt state (psyche mode)
   const [promptType, setPromptType] = React.useState<PromptType>(null);
   const [botClaim, setBotClaim] = React.useState<Move>("Rock");
   const [youClaim, setYouClaim] = React.useState<Move>("Paper");
@@ -58,7 +52,6 @@ export default function RpsApiPredictor() {
   const [intent, setIntent] = React.useState<Intent | undefined>(undefined);
   const [cooldown, setCooldown] = React.useState(0);
 
-  // model outputs
   const [botCommit, setBotCommit] = React.useState<Move>("Rock");
   const [probs, setProbs] = React.useState<{ Rock: number; Paper: number; Scissors: number }>({
     Rock: 0.33,
@@ -66,7 +59,9 @@ export default function RpsApiPredictor() {
     Scissors: 0.33,
   });
 
-  /* helpers */
+  const [isPlaying, setIsPlaying] = React.useState(false);
+
+  /* helpers - YOUR EXACT LOGIC */
   function context(n: number): (Move | Outcome)[] {
     const ctx: (Move | Outcome)[] = [];
     for (let i = 0; i < Math.min(n, history.length); i++) {
@@ -91,7 +86,6 @@ export default function RpsApiPredictor() {
   function streakMove(): Move | null {
     const seq = history.slice(0, 10).map((h) => h.player);
     if (seq.length < 5) return null;
-    // count leading streak
     let s = 1;
     for (let i = 1; i < seq.length; i++) {
       if (seq[i] === seq[0]) s++;
@@ -100,20 +94,17 @@ export default function RpsApiPredictor() {
     return s >= 5 ? seq[0] : null;
   }
 
-  // plan per round
   React.useEffect(() => {
     setBelief(undefined);
     setIntent(undefined);
 
     (async () => {
-      /* RANDOM MODE: truly uniform each round, no prompts, no learning */
       if (mode === "random") {
         setPromptType(null);
         setBotCommit(randMove());
         return;
       }
 
-      /* PSYCHE MODE */
       const maxProb = Math.max(probs.Rock, probs.Paper, probs.Scissors);
       const recentLosses = history.slice(0, 3).filter((h) => h.result === "Lose").length;
       const stuck = (maxProb < 0.45 || recentLosses >= 2) && cooldown === 0;
@@ -122,7 +113,6 @@ export default function RpsApiPredictor() {
         const which: PromptType = Math.random() < 0.5 ? "bot" : "you";
         setPromptType(which);
         if (which === "bot") {
-          // slightly bias classic “Rock” claim
           const bag: Move[] = ["Rock", "Rock", "Paper", "Scissors"];
           setBotClaim(bag[Math.floor(Math.random() * bag.length)]);
         } else {
@@ -134,14 +124,12 @@ export default function RpsApiPredictor() {
         setCooldown((v) => Math.max(0, v - 1));
       }
 
-      // hard counter long user streaks
       const streak = streakMove();
       if (streak) {
         setBotCommit(beatenBy(streak));
         return;
       }
 
-      // ε-greedy: query server or explore
       if (Math.random() > EPSILON) {
         try {
           const res = await fetch(`${API}/predict`, {
@@ -157,12 +145,9 @@ export default function RpsApiPredictor() {
           if (data?.probs) setProbs(data.probs);
           setBotCommit((data?.bot_move as Move) ?? randMove());
           return;
-        } catch {
-          // fallback below
-        }
+        } catch {}
       }
 
-      // heuristic fallback
       if (promptType === "you" && youClaim) {
         const assumed = intent === "will" ? youClaim : beatenBy(youClaim);
         setBotCommit(beatenBy(assumed));
@@ -170,10 +155,8 @@ export default function RpsApiPredictor() {
         setBotCommit(randMove());
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round, mode]);
 
-  /* prompt must be answered to play */
   const promptSatisfied = React.useMemo(() => {
     if (!promptType) return true;
     if (promptType === "bot") return typeof belief !== "undefined";
@@ -188,7 +171,9 @@ export default function RpsApiPredictor() {
 
   async function handlePlay(player: Move) {
     if (!promptSatisfied) return;
-
+    
+    setIsPlaying(true);
+    
     let bot = botCommit;
 
     if (mode === "psyche") {
@@ -196,58 +181,57 @@ export default function RpsApiPredictor() {
         const assumed = intent === "will" ? youClaim : beatenBy(youClaim);
         bot = beatenBy(assumed);
       } else if (promptType === "bot" && belief && botClaim) {
-        if (belief === "believe") bot = beatenBy(beatenBy(botClaim)); // expect user's counter
+        if (belief === "believe") bot = beatenBy(beatenBy(botClaim));
       }
     }
 
-
     const result = decide(player, bot);
 
-    setHistory((h) => [
-      {
-        player,
-        bot,
-        result,
-        promptType,
-        botClaim: promptType === "bot" ? botClaim : undefined,
-        youClaim: promptType === "you" ? youClaim : undefined,
-        belief: promptType === "bot" ? belief : undefined,
-        intent: promptType === "you" ? intent : undefined,
-      },
-      ...h,
-    ]);
+    const thinkingTime = mode === "random" ? 0 : 200; // No delay for random, 500ms for psyche
+    
+    setTimeout(() => {
+      setHistory((h) => [
+        {
+          player,
+          bot,
+          result,
+          promptType,
+          botClaim: promptType === "bot" ? botClaim : undefined,
+          youClaim: promptType === "you" ? youClaim : undefined,
+          belief: promptType === "bot" ? belief : undefined,
+          intent: promptType === "you" ? intent : undefined,
+        },
+        ...h,
+      ]);
 
-    // Only train backend in Psyche mode
-    if (mode === "psyche") {
-      try {
-        await fetch(`${API}/update`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ context: context(6), next_human_move: player }),
-        });
-      } catch {}
-    }
+      setIsPlaying(false);
 
-    setRound((r) => r + 1);
+      if (mode === "psyche") {
+        try {
+          fetch(`${API}/update`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ context: context(6), next_human_move: player }),
+          });
+        } catch {}
+      }
+
+      setRound((r) => r + 1);
+    }, thinkingTime);
   }
 
   async function handleReset() {
-    // clear UI state
     setHistory([]);
     setRound((r) => r + 1);
     setBelief(undefined);
     setIntent(undefined);
     setPromptType(null);
 
-    // tell backend to reset its model/state (best-effort)
     try {
       await fetch(`${API}/reset`, { method: "POST" });
-    } catch {
-      // ignore network errors; UI is already reset
-    }
+    } catch {}
   }
 
-  /* Win rate: W / (W + L), draws ignored */
   const stats = React.useMemo(() => {
     const wins = history.filter((h) => h.result === "Win").length;
     const losses = history.filter((h) => h.result === "Lose").length;
@@ -261,258 +245,390 @@ export default function RpsApiPredictor() {
     };
   }, [history]);
 
-  /* ── UI ─────────────────────────────────────────────────────────────── */
   return (
-    <main className="min-h-screen w-full flex items-center justify-center px-4 py-8 sm:py-12">
-      <div className="w-full max-w-5xl mx-auto space-y-8">
+    <div style={{
+      minHeight: '100vh',
+      backgroundColor: '#1a1a2e',
+      color: '#eee',
+      padding: '20px',
+      fontFamily: 'Arial, sans-serif'
+    }}>
+      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+        
         {/* Header */}
-        <header className="grid gap-4 md:grid-cols-[1fr,220px] items-start">
-          <div className="text-center md:text-left">
-            <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight">
-              Rock • Paper • Scissors • Mind Game
-            </h1>
-            <p className="text-slate-300 mt-2 max-w-2xl mx-auto md:mx-0">
-              Smart prompts only when uncertain. Hybrid learner (TF + streak/frequency).
-            </p>
-          </div>
+        <div style={{ textAlign: 'center', marginBottom: '30px' }}>
+          <h1 style={{ fontSize: '2.5rem', margin: '0 0 10px 0', color: '#fff' }}>
+            Rock Paper Scissors Mind Game
+          </h1>
+          <p style={{ color: '#bbb', margin: '0' }}>Hybrid ML + Behavioral Analysis</p>
+        </div>
 
-          <div className={`${card} md:justify-self-end text-center`}>
-            {/* Reset button at the very top */}
-            <div className="flex justify-end">
-              <button
-                onClick={handleReset}
-                className="px-3 py-1 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs transition"
-                title="Reset local history and backend model"
-              >
-                Reset
-              </button>
-            </div>
-          </div>
-
-
-          <div className={`${card} md:justify-self-end text-center`}>
-            <div className="text-sm text-slate-300">
-              Win Rate: <span className="font-bold text-slate-100">{stats.winRate}%</span>
-            </div>
-            <div className="text-sm text-slate-400 mt-1">
-              W: {stats.wins} &nbsp; L: {stats.losses} &nbsp; D: {stats.draws}
-            </div>
-            <div className="text-sm text-slate-300 mt-2">
-              Mode: <span className="font-bold text-slate-100">{mode === "psyche" ? "Psyche" : "Random"}</span>
-            </div>
-          </div>
-        </header>
-
-        {/* Controls */}
-        <section className="grid sm:grid-cols-2 gap-4">
-          <div className={card}>
-            <div className="text-sm text-slate-300 mb-2">Choose Mode</div>
-            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-              <button
-                onClick={() => setMode("psyche")}
-                className={`px-4 py-2 rounded-xl border transition ${
-                  mode === "psyche"
-                    ? "bg-slate-100 text-slate-900 border-slate-200"
-                    : "bg-slate-800 border-slate-700 hover:bg-slate-700"
-                }`}
-              >
-                Psyche
-              </button>
-              <button
-                onClick={() => setMode("random")}
-                className={`px-4 py-2 rounded-xl border transition ${
-                  mode === "random"
-                    ? "bg-slate-100 text-slate-900 border-slate-200"
-                    : "bg-slate-800 border-slate-700 hover:bg-slate-700"
-                }`}
-              >
-                Random
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* Prompt (psyche only) */}
-        {mode === "psyche" && promptType && (
-          <section className={`${card} border-emerald-900/40`}>
-            {promptType === "bot" ? (
-              <>
-                <div className="text-xs text-slate-400">Prompt</div>
-                <div className="text-2xl font-semibold">
-                  I will go{" "}
-                  <span className="underline decoration-dashed decoration-2 underline-offset-4">
-                    {botClaim}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-2 mt-4">
-                  <button
-                    onClick={() => setBelief("believe")}
-                    className={`px-4 py-2 rounded-xl transition ${
-                      belief === "believe"
-                        ? "bg-emerald-400 text-slate-900"
-                        : "bg-slate-800 hover:bg-slate-700"
-                    }`}
-                  >
-                    I believe you
-                  </button>
-                  <button
-                    onClick={() => setBelief("dont")}
-                    className={`px-4 py-2 rounded-xl transition ${
-                      belief === "dont"
-                        ? "bg-rose-400 text-slate-900"
-                        : "bg-slate-800 hover:bg-slate-700"
-                    }`}
-                  >
-                    I don’t believe you
-                  </button>
-                </div>
-                {!belief && <p className="text-xs text-amber-400 mt-2">Please choose one to continue.</p>}
-              </>
-            ) : (
-              <>
-                <div className="text-xs text-slate-400">Prompt</div>
-                <div className="text-2xl font-semibold">
-                  You will go{" "}
-                  <span className="underline decoration-dashed decoration-2 underline-offset-4">
-                    {youClaim}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-2 mt-4">
-                  <button
-                    onClick={() => setIntent("will")}
-                    className={`px-4 py-2 rounded-xl transition ${
-                      intent === "will"
-                        ? "bg-emerald-400 text-slate-900"
-                        : "bg-slate-800 hover:bg-slate-700"
-                    }`}
-                  >
-                    I will
-                  </button>
-                  <button
-                    onClick={() => setIntent("wont")}
-                    className={`px-4 py-2 rounded-xl transition ${
-                      intent === "wont"
-                        ? "bg-amber-400 text-slate-900"
-                        : "bg-slate-800 hover:bg-slate-700"
-                    }`}
-                  >
-                    I will not
-                  </button>
-                </div>
-                {!intent && <p className="text-xs text-amber-400 mt-2">Please choose one to continue.</p>}
-              </>
-            )}
-          </section>
-        )}
-
-        {/* Move buttons */}
-        <section className="grid grid-cols-3 gap-5 place-items-center">
-          {MOVES.map((m) => (
-            <button
-              key={m}
-              onClick={() => handlePlay(m)}
-              disabled={!promptSatisfied}
-              className={`group aspect-square w-[8.5rem] sm:w-40 rounded-3xl border border-slate-800 bg-slate-100 text-slate-900 hover:bg-white active:scale-[0.98] shadow hover:shadow-lg transition-all ${
-                !promptSatisfied ? "opacity-60 cursor-not-allowed" : ""
-              }`}
-              title={m}
-            >
-              <div className="w-full h-full flex flex-col items-center justify-center gap-2">
-                <div className="w-24 h-24 rounded-full ring-1 ring-slate-300 bg-gradient-to-br from-slate-100 to-slate-200 grid place-items-center">
-                  <Image
-                    src={ICONS[m]}
-                    alt={m}
-                    width={96}
-                    height={96}
-                    className="object-contain select-none"
-                    draggable={false}
-                    priority
-                  />
-                </div>
-                <div className="font-semibold">{m}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr 300px', gap: '30px' }}>
+          
+          {/* Left Panel */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            
+            {/* Mode Selection */}
+            <div style={{
+              backgroundColor: '#2a2a4a',
+              borderRadius: '12px',
+              padding: '20px'
+            }}>
+              <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem' }}>Game Mode</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <button
+                  onClick={() => setMode("psyche")}
+                  style={{
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: mode === "psyche" ? '#4f46e5' : '#374151',
+                    color: 'white',
+                    cursor: 'pointer',
+                    fontSize: '14px'
+                  }}
+                >
+                  Psyche Mode
+                  <div style={{ fontSize: '12px', opacity: 0.8 }}>Smart prompts & learning</div>
+                </button>
+                <button
+                  onClick={() => setMode("random")}
+                  style={{
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: mode === "random" ? '#059669' : '#374151',
+                    color: 'white',
+                    cursor: 'pointer',
+                    fontSize: '14px'
+                  }}
+                >
+                  Random Mode
+                  <div style={{ fontSize: '12px', opacity: 0.8 }}>Pure randomness</div>
+                </button>
               </div>
-            </button>
-          ))}
-        </section>
-
-        {/* Last round */}
-        {history[0] && (
-          <section className={card}>
-            <div className="text-sm text-slate-300">Last round</div>
-            <div className="mt-1 text-lg">
-              You chose <span className="font-semibold">{history[0].player}</span>, bot chose{" "}
-              <span className="font-semibold">{history[0].bot}</span> —{" "}
-              <span
-                className={`ml-1 font-bold ${
-                  history[0].result === "Win"
-                    ? "text-emerald-400"
-                    : history[0].result === "Lose"
-                    ? "text-rose-400"
-                    : "text-slate-200"
-                }`}
-              >
-                {history[0].result}
-              </span>
             </div>
-          </section>
-        )}
 
-        {/* History */}
-        <section className={card}>
-          <div className="max-h-80 overflow-auto rounded-xl">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-800/70 text-slate-300 sticky top-0">
-                <tr>
-                  <th className="px-4 py-2">#</th>
-                  <th className="px-4 py-2">Your Move</th>
-                  <th className="px-4 py-2">Bot Move</th>
-                  <th className="px-4 py-2">Result</th>
-                  <th className="px-4 py-2">Prompt</th>
-                  <th className="px-4 py-2">Details</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((h, i) => (
-                  <tr key={i} className="odd:bg-slate-950/40 even:bg-slate-900/40">
-                    <td className="px-4 py-2">{history.length - i}</td>
-                    <td className="px-4 py-2">{h.player}</td>
-                    <td className="px-4 py-2">{h.bot}</td>
-                    <td
-                      className={`px-4 py-2 font-medium ${
-                        h.result === "Win"
-                          ? "text-emerald-400"
-                          : h.result === "Lose"
-                          ? "text-rose-400"
-                          : "text-slate-200"
-                      }`}
-                    >
-                      {h.result}
-                    </td>
-                    <td className="px-4 py-2">
-                      {h.promptType === "bot"
-                        ? "I will go ..."
-                        : h.promptType === "you"
-                        ? "You will go ..."
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-2">
-                      {h.promptType === "bot" &&
-                        (h.belief
-                          ? `bot said ${h.botClaim}; you ${
-                              h.belief === "believe" ? "believed" : "didn't believe"
-                            }`
-                          : "—")}
-                      {h.promptType === "you" &&
-                        (h.intent ? `you ${h.intent === "will" ? "will" : "will not"} ${h.youClaim}` : "—")}
-                      {!h.promptType && "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {/* Stats */}
+            <div style={{
+              backgroundColor: '#2a2a4a',
+              borderRadius: '12px',
+              padding: '20px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                <h3 style={{ margin: '0', fontSize: '1.1rem' }}>Statistics</h3>
+                <button
+                  onClick={handleReset}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: '#dc2626',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '12px'
+                  }}
+                >
+                  Reset
+                </button>
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#60a5fa' }}>{stats.winRate}%</div>
+                  <div style={{ fontSize: '12px', color: '#9ca3af' }}>Win Rate</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{history.length}</div>
+                  <div style={{ fontSize: '12px', color: '#9ca3af' }}>Games</div>
+                </div>
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', textAlign: 'center' }}>
+                <div style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', borderRadius: '6px', padding: '8px' }}>
+                  <div style={{ fontWeight: 'bold', color: '#4ade80' }}>{stats.wins}</div>
+                  <div style={{ fontSize: '12px' }}>Wins</div>
+                </div>
+                <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', borderRadius: '6px', padding: '8px' }}>
+                  <div style={{ fontWeight: 'bold', color: '#f87171' }}>{stats.losses}</div>
+                  <div style={{ fontSize: '12px' }}>Loss</div>
+                </div>
+                <div style={{ backgroundColor: 'rgba(245, 158, 11, 0.2)', borderRadius: '6px', padding: '8px' }}>
+                  <div style={{ fontWeight: 'bold', color: '#fbbf24' }}>{stats.draws}</div>
+                  <div style={{ fontSize: '12px' }}>Draw</div>
+                </div>
+              </div>
+            </div>
           </div>
-        </section>
+
+          {/* Center Game Area */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+            
+            {/* Prompt */}
+            {mode === "psyche" && promptType && (
+              <div style={{
+                backgroundColor: 'rgba(126, 34, 206, 0.1)',
+                border: '1px solid rgba(126, 34, 206, 0.3)',
+                borderRadius: '12px',
+                padding: '25px',
+                textAlign: 'center'
+              }}>
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ fontSize: '14px', color: '#c084fc', marginBottom: '10px' }}>AI PROMPT</div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
+                    {promptType === "bot" ? (
+                      <>I will choose <span style={{ color: '#c084fc' }}>{botClaim}</span></>
+                    ) : (
+                      <>You will choose <span style={{ color: '#60a5fa' }}>{youClaim}</span></>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '15px', justifyContent: 'center' }}>
+                  {promptType === "bot" ? (
+                    <>
+                      <button
+                        onClick={() => setBelief("believe")}
+                        style={{
+                          padding: '12px 24px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          backgroundColor: belief === "believe" ? '#059669' : '#374151',
+                          color: 'white',
+                          cursor: 'pointer',
+                          fontWeight: '500'
+                        }}
+                      >
+                        I believe you
+                      </button>
+                      <button
+                        onClick={() => setBelief("dont")}
+                        style={{
+                          padding: '12px 24px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          backgroundColor: belief === "dont" ? '#dc2626' : '#374151',
+                          color: 'white',
+                          cursor: 'pointer',
+                          fontWeight: '500'
+                        }}
+                      >
+                        I don't believe
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setIntent("will")}
+                        style={{
+                          padding: '12px 24px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          backgroundColor: intent === "will" ? '#059669' : '#374151',
+                          color: 'white',
+                          cursor: 'pointer',
+                          fontWeight: '500'
+                        }}
+                      >
+                        I will
+                      </button>
+                      <button
+                        onClick={() => setIntent("wont")}
+                        style={{
+                          padding: '12px 24px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          backgroundColor: intent === "wont" ? '#ea580c' : '#374151',
+                          color: 'white',
+                          cursor: 'pointer',
+                          fontWeight: '500'
+                        }}
+                      >
+                        I won't
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Game Buttons */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '25px' }}>
+              {MOVES.map((move) => (
+                <button
+                  key={move}
+                  onClick={() => handlePlay(move)}
+                  disabled={!promptSatisfied || isPlaying}
+                  style={{
+                    backgroundColor: '#ffffff',
+                    color: '#374151',
+                    border: 'none',
+                    borderRadius: '20px',
+                    padding: '30px',
+                    cursor: promptSatisfied && !isPlaying ? 'pointer' : 'not-allowed',
+                    opacity: promptSatisfied && !isPlaying ? 1 : 0.5,
+                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    transition: 'transform 0.2s',
+                    transform: 'scale(1)'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (promptSatisfied && !isPlaying) {
+                      (e.target as HTMLElement).style.transform = 'scale(1.05)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.target as HTMLElement).style.transform = 'scale(1)';
+                  }}
+                >
+                  <Image
+                    src={ICONS[move]}
+                    alt={move}
+                    width={80}
+                    height={80}
+                    style={{ marginBottom: '15px' }}
+                  />
+                  <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>{move}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Last Round */}
+            {history[0] && (
+              <div style={{
+                backgroundColor: '#2a2a4a',
+                borderRadius: '12px',
+                padding: '25px',
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: '14px', color: '#9ca3af', marginBottom: '20px' }}>Last Round</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '40px' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <Image
+                      src={ICONS[history[0].player]}
+                      alt={history[0].player}
+                      width={60}
+                      height={60}
+                      style={{ marginBottom: '10px' }}
+                    />
+                    <div style={{ fontSize: '12px', color: '#9ca3af' }}>You</div>
+                    <div style={{ fontWeight: '600' }}>{history[0].player}</div>
+                  </div>
+                  <div style={{ fontSize: '2rem' }}>VS</div>
+                  <div style={{ textAlign: 'center' }}>
+                    <Image
+                      src={ICONS[history[0].bot]}
+                      alt={history[0].bot}
+                      width={60}
+                      height={60}
+                      style={{ marginBottom: '10px' }}
+                    />
+                    <div style={{ fontSize: '12px', color: '#9ca3af' }}>AI</div>
+                    <div style={{ fontWeight: '600' }}>{history[0].bot}</div>
+                  </div>
+                </div>
+                <div style={{
+                  fontSize: '1.5rem',
+                  fontWeight: 'bold',
+                  marginTop: '20px',
+                  color: history[0].result === "Win" ? '#4ade80' : 
+                        history[0].result === "Lose" ? '#f87171' : '#fbbf24'
+                }}>
+                  {history[0].result === "Win" ? "You Won!" : 
+                   history[0].result === "Lose" ? "AI Won!" : "Draw!"}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right Panel - History */}
+          <div>
+            <div style={{
+              backgroundColor: '#2a2a4a',
+              borderRadius: '12px',
+              padding: '20px'
+            }}>
+              <h3 style={{ margin: '0 0 20px 0', fontSize: '1.1rem' }}>History</h3>
+              <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                {history.length === 0 ? (
+                  <p style={{ color: '#6b7280', textAlign: 'center', padding: '20px 0' }}>No games yet</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {history.slice(0, 20).map((game, i) => (
+                      <div key={i} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px',
+                        backgroundColor: '#374151',
+                        borderRadius: '6px',
+                        fontSize: '14px'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ color: '#9ca3af' }}>#{history.length - i}</span>
+                          <Image src={ICONS[game.player]} alt="" width={20} height={20} />
+                          <span style={{ color: '#6b7280' }}>vs</span>
+                          <Image src={ICONS[game.bot]} alt="" width={20} height={20} />
+                        </div>
+                        <span style={{
+                          fontWeight: 'bold',
+                          color: game.result === "Win" ? '#4ade80' : 
+                                game.result === "Lose" ? '#f87171' : '#fbbf24'
+                        }}>
+                          {game.result[0]}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Loading */}
+        {isPlaying && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000
+          }}>
+            <div style={{
+              backgroundColor: '#2a2a4a',
+              borderRadius: '12px',
+              padding: '25px',
+              textAlign: 'center'
+            }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                border: '4px solid #4f46e5',
+                borderTop: '4px solid transparent',
+                borderRadius: '50%',
+                margin: '0 auto 15px',
+                animation: 'spin 1s linear infinite'
+              }}></div>
+              <p style={{ margin: '0' }}>AI thinking...</p>
+            </div>
+          </div>
+        )}
       </div>
-    </main>
+
+      <style jsx>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
   );
 }
