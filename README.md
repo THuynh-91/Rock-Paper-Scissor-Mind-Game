@@ -24,24 +24,6 @@ The frontend sends recent context (sequence of your last moves + outcomes) to th
 The API tracks simple **move frequencies** and applies **ε-greedy** exploration, detects **repeated-move streaks** and hard-counters them, and updates its counts online on every round.  
 Frontend decides when to show a **prompt** (uncertain model / small loss streak). You must answer the prompt before you can play that round.  
 
-> Note: This project currently uses statistical learning & heuristics. If you later swap in a small Keras/TensorFlow model inside the API, it becomes a bona-fide ML project without changing the UI.
-
----
-
-## 🧩 Architecture
-```
-/api        FastAPI service
-  └─ app/main.py        # /predict, /update, /reset endpoints; online updates
-  └─ requirements.txt   # FastAPI, pydantic, numpy (ready for TF later)
-
-/web        Next.js 14 + Tailwind UI
-  ├─ app/layout.tsx, page.tsx
-  ├─ components/RpsApiPredictor.tsx
-  └─ public/icons/{rock.png,paper.png,scissor.png}
-
-docker-compose.yml      # One command to run web + api
-```
-
 ---
 
 ## 🚀 Quick start
@@ -72,33 +54,6 @@ npm i
 # NEXT_PUBLIC_API_URL=http://localhost:8000
 npm run dev  # http://localhost:3000
 ```
-
----
-
-## 🔌 API Endpoints
-- **POST /predict**  
-  req:  
-  ```json
-  { "context": (Move|Outcome)[], "prompt_type": "bot"|"you"|null, "adherence": number }
-  ```  
-  res:  
-  ```json
-  { "bot_move": "Rock"|"Paper"|"Scissors", "probs": { "Rock":0.33, "Paper":0.33, "Scissors":0.33 } }
-  ```
-
-- **POST /update**  
-  req:  
-  ```json
-  { "context": (Move|Outcome)[], "next_human_move": "Rock"|"Paper"|"Scissors" }
-  ```  
-  res: `{ "ok": true }`
-
-- **POST /reset**  
-  Clears in-memory state (counts, model file if present)  
-  res: `{ "ok": true }`  
-
-`context` is a flattened list like:  
-`["Rock","W","Paper","L","Scissors","D", ...]` (latest first).
 
 ---
 
@@ -143,23 +98,12 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 - **Port already in use**: close existing processes on 3000/8000 or change ports
 - **Compose “invalid mount path”**: ensure there is no dangling `docker-compose.override.yml` and your compose file uses valid relative binds (already set in this repo)
 
----
-
-## 🗺️ Roadmap
-- Optional: Replace frequency model with a **tiny Keras/LSTM** for sequence prediction
-- Persist model weights to `model.h5` and load at startup
-- Simple dashboard for per-move probabilities and confidence
-- Add tests for API and UI interactions
 
 ---
 
 ## 📄 License
 MIT — do what you like, a credit link is appreciated.
 
----
-
-## 🙌 Credits
-Built with **Next.js + Tailwind** (UI) and **FastAPI** (API). Prompts, streak detection, and ε-greedy blend are inspired by classic RPS strategy research and game-theory heuristics.
 
 ---
 
