@@ -7,6 +7,21 @@ from typing import List, Literal, Optional
 import numpy as np
 import tensorflow as tf
 import os
+from fastapi.middleware.cors import CORSMiddleware
+
+
+app = FastAPI(title="RPS-ML API", version="1.1")
+
+origins = os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 Move = Literal["Rock","Paper","Scissors"]
 Outcome = Literal["W","L","D"]
