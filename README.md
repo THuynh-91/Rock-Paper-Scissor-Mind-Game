@@ -26,34 +26,14 @@ Frontend decides when to show a **prompt** (uncertain model / small loss streak)
 
 ---
 
-## 🚀 Quick start
+## 🚀 How to Run
 
-### Option A: Docker (recommended)
 Requirements: **Docker Desktop**
 ```bash
 docker compose up --build
 ```
 - Web: http://localhost:3000  
 - API: http://localhost:8000  
-
-### Option B: Local dev (two terminals)
-
-**Backend (FastAPI)**
-```bash
-cd api
-# (optional) python -m venv .venv && .venv\Scripts\activate  # Windows
-pip install -r requirements.txt
-uvicorn app.main:app --reload  # http://localhost:8000
-```
-
-**Frontend (Next.js)**
-```bash
-cd web
-npm i
-# ensure .env.local contains:
-# NEXT_PUBLIC_API_URL=http://localhost:8000
-npm run dev  # http://localhost:3000
-```
 
 ---
 
