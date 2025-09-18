@@ -289,7 +289,7 @@ export default function RpsApiPredictor() {
                   }}
                 >
                   Psyche Mode
-                  <div style={{ fontSize: '12px', opacity: 0.8 }}>Smart prompts & learning</div>
+                  <div style={{ fontSize: '12px', opacity: 0.8 }}>Learns from Data</div>
                 </button>
                 <button
                   onClick={() => setMode("random")}
