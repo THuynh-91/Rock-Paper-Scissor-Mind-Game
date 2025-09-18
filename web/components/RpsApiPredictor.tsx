@@ -1,8 +1,9 @@
-"use client";
+﻿"use client";
 
 import React from "react";
 import Image from "next/image";
 
+/* ── Types ────────────────────────────────────────────────────────────── */
 type Move = "Rock" | "Paper" | "Scissors";
 type Outcome = "W" | "L" | "D";
 type Mode = "random" | "psyche";
@@ -10,6 +11,7 @@ type PromptType = "bot" | "you" | null;
 type Belief = "believe" | "dont";
 type Intent = "will" | "wont";
 
+/* ── Constants ────────────────────────────────────────────────────────── */
 const MOVES: Move[] = ["Rock", "Paper", "Scissors"];
 const ICONS: Record<Move, string> = {
   Rock: "/icons/rock.png",
@@ -24,16 +26,17 @@ const beatenBy = (a: Move): Move =>
 const randMove = (): Move => MOVES[Math.floor(Math.random() * 3)];
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const EPSILON = 0.12; // fixed default exploration
+const EPSILON = 0.12; // only used in Psyche mode
 
+/* small reusable card style */
 const card =
-  "rounded-2xl border border-slate-800/60 bg-slate-900/50 backdrop-blur supports-[backdrop-filter]:bg-slate-900/40 shadow-[0_20px_60px_-25px_rgba(0,0,0,.6),0_8px_24px_-16px_rgba(0,0,0,.5)]";
+  "rounded-2xl border border-slate-800/60 bg-slate-900/60 backdrop-blur supports-[backdrop-filter]:bg-slate-900/50 shadow-[0_6px_30px_-12px_rgba(0,0,0,0.6)] p-4";
 
-/* ------------------------- Component ------------------------- */
-
+/* ── Component ─────────────────────────────────────────────────────────── */
 export default function RpsApiPredictor() {
   const [mode, setMode] = React.useState<Mode>("psyche");
   const [round, setRound] = React.useState(1);
+
   const [history, setHistory] = React.useState<
     {
       player: Move;
@@ -47,7 +50,7 @@ export default function RpsApiPredictor() {
     }[]
   >([]);
 
-  // prompt state
+  // prompt state (psyche mode)
   const [promptType, setPromptType] = React.useState<PromptType>(null);
   const [botClaim, setBotClaim] = React.useState<Move>("Rock");
   const [youClaim, setYouClaim] = React.useState<Move>("Paper");
@@ -63,6 +66,7 @@ export default function RpsApiPredictor() {
     Scissors: 0.33,
   });
 
+  /* helpers */
   function context(n: number): (Move | Outcome)[] {
     const ctx: (Move | Outcome)[] = [];
     for (let i = 0; i < Math.min(n, history.length); i++) {
@@ -87,7 +91,7 @@ export default function RpsApiPredictor() {
   function streakMove(): Move | null {
     const seq = history.slice(0, 10).map((h) => h.player);
     if (seq.length < 5) return null;
-    if (seq.every((m) => m === seq[0])) return seq[0];
+    // count leading streak
     let s = 1;
     for (let i = 1; i < seq.length; i++) {
       if (seq[i] === seq[0]) s++;
@@ -96,23 +100,33 @@ export default function RpsApiPredictor() {
     return s >= 5 ? seq[0] : null;
   }
 
+  // plan per round
   React.useEffect(() => {
     setBelief(undefined);
     setIntent(undefined);
 
     (async () => {
+      /* RANDOM MODE: truly uniform each round, no prompts, no learning */
+      if (mode === "random") {
+        setPromptType(null);
+        setBotCommit(randMove());
+        return;
+      }
+
+      /* PSYCHE MODE */
       const maxProb = Math.max(probs.Rock, probs.Paper, probs.Scissors);
       const recentLosses = history.slice(0, 3).filter((h) => h.result === "Lose").length;
       const stuck = (maxProb < 0.45 || recentLosses >= 2) && cooldown === 0;
 
-      if (mode === "psyche" && stuck) {
+      if (stuck) {
         const which: PromptType = Math.random() < 0.5 ? "bot" : "you";
         setPromptType(which);
         if (which === "bot") {
+          // slightly bias classic “Rock” claim
           const bag: Move[] = ["Rock", "Rock", "Paper", "Scissors"];
           setBotClaim(bag[Math.floor(Math.random() * bag.length)]);
         } else {
-          setYouClaim(MOVES[Math.floor(Math.random() * 3)]);
+          setYouClaim(randMove());
         }
         setCooldown(2);
       } else {
@@ -120,27 +134,36 @@ export default function RpsApiPredictor() {
         setCooldown((v) => Math.max(0, v - 1));
       }
 
+      // hard counter long user streaks
       const streak = streakMove();
       if (streak) {
         setBotCommit(beatenBy(streak));
         return;
       }
 
+      // ε-greedy: query server or explore
       if (Math.random() > EPSILON) {
         try {
           const res = await fetch(`${API}/predict`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ context: context(6), prompt_type: promptType, adherence: adherence() }),
+            body: JSON.stringify({
+              context: context(6),
+              prompt_type: promptType,
+              adherence: adherence(),
+            }),
           });
           const data = await res.json();
           if (data?.probs) setProbs(data.probs);
           setBotCommit((data?.bot_move as Move) ?? randMove());
           return;
-        } catch {}
+        } catch {
+          // fallback below
+        }
       }
 
-      if (promptType === "you") {
+      // heuristic fallback
+      if (promptType === "you" && youClaim) {
         const assumed = intent === "will" ? youClaim : beatenBy(youClaim);
         setBotCommit(beatenBy(assumed));
       } else {
@@ -150,6 +173,7 @@ export default function RpsApiPredictor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round, mode]);
 
+  /* prompt must be answered to play */
   const promptSatisfied = React.useMemo(() => {
     if (!promptType) return true;
     if (promptType === "bot") return typeof belief !== "undefined";
@@ -166,12 +190,16 @@ export default function RpsApiPredictor() {
     if (!promptSatisfied) return;
 
     let bot = botCommit;
-    if (promptType === "you" && youClaim && intent) {
-      const assumed = intent === "will" ? youClaim : beatenBy(youClaim);
-      bot = beatenBy(assumed);
-    } else if (promptType === "bot" && belief && botClaim) {
-      if (belief === "believe") bot = beatenBy(beatenBy(botClaim));
+
+    if (mode === "psyche") {
+      if (promptType === "you" && youClaim && intent) {
+        const assumed = intent === "will" ? youClaim : beatenBy(youClaim);
+        bot = beatenBy(assumed);
+      } else if (promptType === "bot" && belief && botClaim) {
+        if (belief === "believe") bot = beatenBy(beatenBy(botClaim)); // expect user's counter
+      }
     }
+
 
     const result = decide(player, bot);
 
@@ -189,96 +217,124 @@ export default function RpsApiPredictor() {
       ...h,
     ]);
 
-    try {
-      await fetch(`${API}/update`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ context: context(6), next_human_move: player }),
-      });
-    } catch {}
+    // Only train backend in Psyche mode
+    if (mode === "psyche") {
+      try {
+        await fetch(`${API}/update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ context: context(6), next_human_move: player }),
+        });
+      } catch {}
+    }
 
     setRound((r) => r + 1);
   }
 
-  // Win rate = W / (W+L), ignore D
+  async function handleReset() {
+    // clear UI state
+    setHistory([]);
+    setRound((r) => r + 1);
+    setBelief(undefined);
+    setIntent(undefined);
+    setPromptType(null);
+
+    // tell backend to reset its model/state (best-effort)
+    try {
+      await fetch(`${API}/reset`, { method: "POST" });
+    } catch {
+      // ignore network errors; UI is already reset
+    }
+  }
+
+  /* Win rate: W / (W + L), draws ignored */
   const stats = React.useMemo(() => {
     const wins = history.filter((h) => h.result === "Win").length;
     const losses = history.filter((h) => h.result === "Lose").length;
     const draws = history.filter((h) => h.result === "Draw").length;
     const wlTotal = Math.max(1, wins + losses);
-    return { wins, losses, draws, winRate: Math.round((wins / wlTotal) * 100) };
+    return {
+      wins,
+      losses,
+      draws,
+      winRate: Math.round((wins / wlTotal) * 100),
+    };
   }, [history]);
 
+  /* ── UI ─────────────────────────────────────────────────────────────── */
   return (
-    <main
-      className="min-h-screen w-full px-4 py-10 sm:py-14 flex items-start justify-center"
-      style={{
-        background:
-          "radial-gradient(1200px 700px at 10% -10%, rgba(99,102,241,.15), transparent 60%), radial-gradient(900px 500px at 110% 0%, rgba(56,189,248,.12), transparent 60%), radial-gradient(700px 450px at 50% 120%, rgba(16,185,129,.10), transparent 60%), #0b1220",
-      }}
-    >
-      <div className="w-full max-w-6xl space-y-8 text-slate-100">
-        {/* Hero */}
-        <header className="text-center">
-          <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-300 via-sky-300 to-emerald-300">
-            Rock • Paper • Scissors • Mind Game
-          </h1>
-        </header>
-
-        {/* Scoreboard */}
-        <section className="grid sm:grid-cols-3 gap-4">
-          <div className={`${card} p-5`}>
-            <div className="text-xs text-slate-400">Win Rate</div>
-            <div className="mt-1 text-3xl font-black">{stats.winRate}%</div>
+    <main className="min-h-screen w-full flex items-center justify-center px-4 py-8 sm:py-12">
+      <div className="w-full max-w-5xl mx-auto space-y-8">
+        {/* Header */}
+        <header className="grid gap-4 md:grid-cols-[1fr,220px] items-start">
+          <div className="text-center md:text-left">
+            <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight">
+              Rock • Paper • Scissors • Mind Game
+            </h1>
+            <p className="text-slate-300 mt-2 max-w-2xl mx-auto md:mx-0">
+              Smart prompts only when uncertain. Hybrid learner (TF + streak/frequency).
+            </p>
           </div>
-          <div className={`${card} p-5`}>
-            <div className="text-xs text-slate-400">Record</div>
-            <div className="mt-1 text-lg">
-              <span className="font-semibold">W:</span> {stats.wins}{" "}
-              <span className="font-semibold ml-3">L:</span> {stats.losses}{" "}
-              <span className="font-semibold ml-3">D:</span> {stats.draws}
+
+          <div className={`${card} md:justify-self-end text-center`}>
+            {/* Reset button at the very top */}
+            <div className="flex justify-end">
+              <button
+                onClick={handleReset}
+                className="px-3 py-1 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs transition"
+                title="Reset local history and backend model"
+              >
+                Reset
+              </button>
             </div>
           </div>
-          <div className={`${card} p-5`}>
-            <div className="text-xs text-slate-400">Mode</div>
-            <div className="mt-1 text-lg font-semibold">{mode === "psyche" ? "Psyche" : "Random"}</div>
+
+
+          <div className={`${card} md:justify-self-end text-center`}>
+            <div className="text-sm text-slate-300">
+              Win Rate: <span className="font-bold text-slate-100">{stats.winRate}%</span>
+            </div>
+            <div className="text-sm text-slate-400 mt-1">
+              W: {stats.wins} &nbsp; L: {stats.losses} &nbsp; D: {stats.draws}
+            </div>
+            <div className="text-sm text-slate-300 mt-2">
+              Mode: <span className="font-bold text-slate-100">{mode === "psyche" ? "Psyche" : "Random"}</span>
+            </div>
           </div>
-        </section>
+        </header>
 
         {/* Controls */}
-        <section className={`${card} p-5`}>
-          <div className="text-sm text-slate-300 mb-2">Mode</div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => setMode("psyche")}
-              className={`px-5 py-2 rounded-xl border transition ring-0 hover:ring-2 hover:ring-indigo-300 ${
-                mode === "psyche"
-                  ? "bg-slate-100 text-slate-900 border-slate-200"
-                  : "bg-slate-800 border-slate-700 hover:bg-slate-700"
-              }`}
-            >
-              Psyche
-            </button>
-            <button
-              onClick={() => setMode("random")}
-              className={`px-5 py-2 rounded-xl border transition ring-0 hover:ring-2 hover:ring-indigo-300 ${
-                mode === "random"
-                  ? "bg-slate-100 text-slate-900 border-slate-200"
-                  : "bg-slate-800 border-slate-700 hover:bg-slate-700"
-              }`}
-            >
-              Random
-            </button>
+        <section className="grid sm:grid-cols-2 gap-4">
+          <div className={card}>
+            <div className="text-sm text-slate-300 mb-2">Choose Mode</div>
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+              <button
+                onClick={() => setMode("psyche")}
+                className={`px-4 py-2 rounded-xl border transition ${
+                  mode === "psyche"
+                    ? "bg-slate-100 text-slate-900 border-slate-200"
+                    : "bg-slate-800 border-slate-700 hover:bg-slate-700"
+                }`}
+              >
+                Psyche
+              </button>
+              <button
+                onClick={() => setMode("random")}
+                className={`px-4 py-2 rounded-xl border transition ${
+                  mode === "random"
+                    ? "bg-slate-100 text-slate-900 border-slate-200"
+                    : "bg-slate-800 border-slate-700 hover:bg-slate-700"
+                }`}
+              >
+                Random
+              </button>
+            </div>
           </div>
         </section>
 
-        {/* Prompt */}
-        {promptType && (
-          <section
-            className={`${card} p-5 border-l-4 ${
-              promptType === "bot" ? "border-l-sky-400" : "border-l-emerald-400"
-            }`}
-          >
+        {/* Prompt (psyche only) */}
+        {mode === "psyche" && promptType && (
+          <section className={`${card} border-emerald-900/40`}>
             {promptType === "bot" ? (
               <>
                 <div className="text-xs text-slate-400">Prompt</div>
@@ -288,10 +344,10 @@ export default function RpsApiPredictor() {
                     {botClaim}
                   </span>
                 </div>
-                <div className="flex flex-wrap gap-3 mt-4">
+                <div className="flex flex-wrap gap-2 mt-4">
                   <button
                     onClick={() => setBelief("believe")}
-                    className={`px-5 py-2 rounded-xl transition ${
+                    className={`px-4 py-2 rounded-xl transition ${
                       belief === "believe"
                         ? "bg-emerald-400 text-slate-900"
                         : "bg-slate-800 hover:bg-slate-700"
@@ -301,8 +357,10 @@ export default function RpsApiPredictor() {
                   </button>
                   <button
                     onClick={() => setBelief("dont")}
-                    className={`px-5 py-2 rounded-xl transition ${
-                      belief === "dont" ? "bg-rose-400 text-slate-900" : "bg-slate-800 hover:bg-slate-700"
+                    className={`px-4 py-2 rounded-xl transition ${
+                      belief === "dont"
+                        ? "bg-rose-400 text-slate-900"
+                        : "bg-slate-800 hover:bg-slate-700"
                     }`}
                   >
                     I don’t believe you
@@ -319,19 +377,23 @@ export default function RpsApiPredictor() {
                     {youClaim}
                   </span>
                 </div>
-                <div className="flex flex-wrap gap-3 mt-4">
+                <div className="flex flex-wrap gap-2 mt-4">
                   <button
                     onClick={() => setIntent("will")}
-                    className={`px-5 py-2 rounded-xl transition ${
-                      intent === "will" ? "bg-emerald-400 text-slate-900" : "bg-slate-800 hover:bg-slate-700"
+                    className={`px-4 py-2 rounded-xl transition ${
+                      intent === "will"
+                        ? "bg-emerald-400 text-slate-900"
+                        : "bg-slate-800 hover:bg-slate-700"
                     }`}
                   >
                     I will
                   </button>
                   <button
                     onClick={() => setIntent("wont")}
-                    className={`px-5 py-2 rounded-xl transition ${
-                      intent === "wont" ? "bg-amber-400 text-slate-900" : "bg-slate-800 hover:bg-slate-700"
+                    className={`px-4 py-2 rounded-xl transition ${
+                      intent === "wont"
+                        ? "bg-amber-400 text-slate-900"
+                        : "bg-slate-800 hover:bg-slate-700"
                     }`}
                   >
                     I will not
@@ -343,21 +405,20 @@ export default function RpsApiPredictor() {
           </section>
         )}
 
-        {/* Moves */}
-        <section className="grid grid-cols-3 gap-6">
+        {/* Move buttons */}
+        <section className="grid grid-cols-3 gap-5 place-items-center">
           {MOVES.map((m) => (
             <button
               key={m}
               onClick={() => handlePlay(m)}
               disabled={!promptSatisfied}
-              title={m}
-              className={`group relative aspect-square w-full rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-100 to-slate-200 text-slate-900 shadow hover:shadow-xl active:scale-[0.98] transition-all ring-0 hover:ring-4 hover:ring-indigo-300/30 ${
+              className={`group aspect-square w-[8.5rem] sm:w-40 rounded-3xl border border-slate-800 bg-slate-100 text-slate-900 hover:bg-white active:scale-[0.98] shadow hover:shadow-lg transition-all ${
                 !promptSatisfied ? "opacity-60 cursor-not-allowed" : ""
               }`}
+              title={m}
             >
-              <div className="absolute inset-0 rounded-3xl bg-white/0 group-hover:bg-white/5 transition" />
-              <div className="w-full h-full flex flex-col items-center justify-center gap-3">
-                <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full ring-1 ring-slate-300 bg-gradient-to-br from-white to-slate-100 grid place-items-center group-hover:scale-[1.03] transition">
+              <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+                <div className="w-24 h-24 rounded-full ring-1 ring-slate-300 bg-gradient-to-br from-slate-100 to-slate-200 grid place-items-center">
                   <Image
                     src={ICONS[m]}
                     alt={m}
@@ -376,7 +437,7 @@ export default function RpsApiPredictor() {
 
         {/* Last round */}
         {history[0] && (
-          <section className={`${card} p-5`}>
+          <section className={card}>
             <div className="text-sm text-slate-300">Last round</div>
             <div className="mt-1 text-lg">
               You chose <span className="font-semibold">{history[0].player}</span>, bot chose{" "}
@@ -397,8 +458,8 @@ export default function RpsApiPredictor() {
         )}
 
         {/* History */}
-        <section className={`${card} p-0 overflow-hidden`}>
-          <div className="max-h-80 overflow-auto">
+        <section className={card}>
+          <div className="max-h-80 overflow-auto rounded-xl">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-800/70 text-slate-300 sticky top-0">
                 <tr>
@@ -428,12 +489,18 @@ export default function RpsApiPredictor() {
                       {h.result}
                     </td>
                     <td className="px-4 py-2">
-                      {h.promptType === "bot" ? "I will go ..." : h.promptType === "you" ? "You will go ..." : "—"}
+                      {h.promptType === "bot"
+                        ? "I will go ..."
+                        : h.promptType === "you"
+                        ? "You will go ..."
+                        : "—"}
                     </td>
                     <td className="px-4 py-2">
                       {h.promptType === "bot" &&
                         (h.belief
-                          ? `bot said ${h.botClaim}; you ${h.belief === "believe" ? "believed" : "didn't believe"}`
+                          ? `bot said ${h.botClaim}; you ${
+                              h.belief === "believe" ? "believed" : "didn't believe"
+                            }`
                           : "—")}
                       {h.promptType === "you" &&
                         (h.intent ? `you ${h.intent === "will" ? "will" : "will not"} ${h.youClaim}` : "—")}

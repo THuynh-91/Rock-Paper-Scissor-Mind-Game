@@ -1,0 +1,350 @@
+"use client";
+
+import React from "react";
+import Image from "next/image";
+
+type Move = "Rock" | "Paper" | "Scissors";
+type Outcome = "W" | "L" | "D";
+type Mode = "random" | "psyche";
+type PromptType = "bot" | "you" | null;
+type Belief = "believe" | "dont";
+type Intent = "will" | "wont";
+
+const MOVES: Move[] = ["Rock", "Paper", "Scissors"];
+const ICONS: Record<Move, string> = {
+  Rock: "/icons/rock.png",
+  Paper: "/icons/paper.png",
+  Scissors: "/icons/scissor.png",
+};
+
+const beats = (a: Move): Move =>
+  a === "Rock" ? "Scissors" : a === "Paper" ? "Rock" : "Paper";
+const beatenBy = (a: Move): Move =>
+  a === "Rock" ? "Paper" : a === "Paper" ? "Scissors" : "Rock";
+const randMove = (): Move => MOVES[Math.floor(Math.random() * 3)];
+
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const EPSILON = 0.12; // fixed default exploration
+
+const card =
+  "rounded-2xl border border-slate-800/60 bg-slate-900/50 backdrop-blur supports-[backdrop-filter]:bg-slate-900/40 shadow-[0_20px_60px_-25px_rgba(0,0,0,.6),0_8px_24px_-16px_rgba(0,0,0,.5)]";
+
+/* ------------------------------------------------------------ */
+
+export default function RpsApiPredictor() {
+  const [mode, setMode] = React.useState<Mode>("psyche");
+  const [round, setRound] = React.useState(1);
+  const [history, setHistory] = React.useState<
+    {
+      player: Move;
+      bot: Move;
+      result: "Win" | "Lose" | "Draw";
+      promptType: PromptType;
+      botClaim?: Move;
+      youClaim?: Move;
+      belief?: Belief;
+      intent?: Intent;
+    }[]
+  >([]);
+
+  // prompt state
+  const [promptType, setPromptType] = React.useState<PromptType>(null);
+  const [botClaim, setBotClaim] = React.useState<Move>("Rock");
+  const [youClaim, setYouClaim] = React.useState<Move>("Paper");
+  const [belief, setBelief] = React.useState<Belief | undefined>(undefined);
+  const [intent, setIntent] = React.useState<Intent | undefined>(undefined);
+  const [cooldown, setCooldown] = React.useState(0);
+
+  // model outputs
+  const [botCommit, setBotCommit] = React.useState<Move>("Rock");
+  const [probs, setProbs] = React.useState<{ Rock: number; Paper: number; Scissors: number }>(
+    { Rock: 0.33, Paper: 0.33, Scissors: 0.33 }
+  );
+
+  // ---- helpers ----
+  function context(n: number): (Move | Outcome)[] {
+    const ctx: (Move | Outcome)[] = [];
+    for (let i = 0; i < Math.min(n, history.length); i++) {
+      const h = history[i];
+      ctx.push(h.player);
+      ctx.push(h.result === "Win" ? "W" : h.result === "Lose" ? "L" : "D");
+    }
+    return ctx;
+  }
+
+  function adherence(): number {
+    const recent = history.filter((h) => h.promptType === "you").slice(0, 10);
+    if (recent.length === 0) return 0.5;
+    let ok = 0;
+    for (const r of recent) {
+      if (r.intent === "will" && r.player === r.youClaim) ok++;
+      if (r.intent === "wont" && r.player !== r.youClaim) ok++;
+    }
+    return ok / recent.length;
+  }
+
+  function streakMove(): Move | null {
+    const seq = history.slice(0, 10).map((h) => h.player);
+    if (seq.length < 5) return null;
+    if (seq.every((m) => m === seq[0])) return seq[0];
+    let s = 1;
+    for (let i = 1; i < seq.length; i++) {
+      if (seq[i] === seq[0]) s++;
+      else break;
+    }
+    return s >= 5 ? seq[0] : null;
+  }
+
+  // plan each round
+  React.useEffect(() => {
+    setBelief(undefined);
+    setIntent(undefined);
+
+    (async () => {
+      // --- TRUE RANDOM MODE ---
+      if (mode === "random") {
+        // no prompts, no model calls, uniform random every round
+        setPromptType(null);
+        setCooldown(0);
+        setBotCommit(randMove());
+        return;
+      }
+
+      // --- PSYCHE MODE (hybrid) ---
+      const maxProb = Math.max(probs.Rock, probs.Paper, probs.Scissors);
+      const recentLosses = history.slice(0, 3).filter((h) => h.result === "Lose").length;
+      const stuck = (maxProb < 0.45 || recentLosses >= 2) && cooldown === 0;
+
+      if (stuck) {
+        const which: PromptType = Math.random() < 0.5 ? "bot" : "you";
+        setPromptType(which);
+        if (which === "bot") {
+          const bag: Move[] = ["Rock", "Rock", "Paper", "Scissors"];
+          setBotClaim(bag[Math.floor(Math.random() * bag.length)]);
+        } else {
+          setYouClaim(MOVES[Math.floor(Math.random() * 3)]);
+        }
+        setCooldown(2);
+      } else {
+        setPromptType(null);
+        setCooldown((v) => Math.max(0, v - 1));
+      }
+
+      const streak = streakMove();
+      if (streak) {
+        setBotCommit(beatenBy(streak));
+        return;
+      }
+
+      if (Math.random() > EPSILON) {
+        try {
+          const res = await fetch(`${API}/predict`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ context: context(6), prompt_type: promptType, adherence: adherence() }),
+          });
+          const data = await res.json();
+          if (data?.probs) setProbs(data.probs);
+          setBotCommit((data?.bot_move as Move) ?? randMove());
+          return;
+        } catch {}
+      }
+
+      if (promptType === "you") {
+        const assumed = intent === "will" ? youClaim : beatenBy(youClaim);
+        setBotCommit(beatenBy(assumed));
+      } else {
+        setBotCommit(randMove());
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [round, mode]);
+
+  const promptSatisfied = React.useMemo(() => {
+    if (!promptType) return true;
+    if (promptType === "bot") return typeof belief !== "undefined";
+    if (promptType === "you") return typeof intent !== "undefined";
+    return true;
+  }, [promptType, belief, intent]);
+
+  function decide(player: Move, bot: Move): "Win" | "Lose" | "Draw" {
+    if (player === bot) return "Draw";
+    return beats(player) === bot ? "Win" : "Lose";
+  }
+
+  async function handlePlay(player: Move) {
+    if (!promptSatisfied) return;
+
+    // in random mode, botCommit is already random each round
+    let bot = botCommit;
+
+    if (mode === "psyche") {
+      if (promptType === "you" && youClaim && intent) {
+        const assumed = intent === "will" ? youClaim : beatenBy(youClaim);
+        bot = beatenBy(assumed);
+      } else if (promptType === "bot" && belief && botClaim) {
+        if (belief === "believe") bot = beatenBy(beatenBy(botClaim));
+      }
+    }
+
+    const result = decide(player, bot);
+
+    setHistory((h) => [
+      {
+        player,
+        bot,
+        result,
+        promptType: mode === "random" ? null : promptType,
+        botClaim: mode === "psyche" && promptType === "bot" ? botClaim : undefined,
+        youClaim: mode === "psyche" && promptType === "you" ? youClaim : undefined,
+        belief: mode === "psyche" && promptType === "bot" ? belief : undefined,
+        intent: mode === "psyche" && promptType === "you" ? intent : undefined,
+      },
+      ...h,
+    ]);
+
+    // only train backend in psyche mode
+    if (mode === "psyche") {
+      try {
+        await fetch(`${API}/update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ context: context(6), next_human_move: player }),
+        });
+      } catch {}
+    }
+
+    setRound((r) => r + 1);
+  }
+
+  // Reset all state + backend
+  async function handleReset() {
+    setHistory([]);
+    setRound(1);
+    setPromptType(null);
+    setBelief(undefined);
+    setIntent(undefined);
+    setCooldown(0);
+    setBotCommit(randMove());
+    try {
+      await fetch(`${API}/reset`, { method: "POST" });
+    } catch {}
+  }
+
+  // Win rate = W / (W + L)
+  const stats = React.useMemo(() => {
+    const wins = history.filter((h) => h.result === "Win").length;
+    const losses = history.filter((h) => h.result === "Lose").length;
+    const draws = history.filter((h) => h.result === "Draw").length;
+    const wlTotal = Math.max(1, wins + losses);
+    return { wins, losses, draws, winRate: Math.round((wins / wlTotal) * 100) };
+  }, [history]);
+
+  return (
+  <main
+    className="min-h-screen w-full flex items-start justify-center px-4 py-10"
+    style={{
+      background:
+        "linear-gradient(135deg, #6366f1 0%, #3b82f6 40%, #8b5cf6 100%)",
+    }}
+  >
+    <div className="w-full max-w-5xl space-y-10 text-slate-100">
+      {/* Header row with reset */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-extrabold tracking-tight drop-shadow">
+          Rock • Paper • Scissors • Mind Game
+        </h1>
+        <button
+          onClick={handleReset}
+          className="px-5 py-2 rounded-full bg-white/80 text-slate-900 font-semibold hover:bg-white shadow-lg transition"
+        >
+          Reset1
+        </button>
+      </div>
+
+      {/* Scoreboard */}
+      <section className="grid sm:grid-cols-3 gap-6">
+        <div className={`${card} text-center p-6`}>
+          <div className="text-sm text-slate-300">Win Rate</div>
+          <div className="text-4xl font-black text-white mt-1">
+            {stats.winRate}%
+          </div>
+        </div>
+        <div className={`${card} text-center p-6`}>
+          <div className="text-sm text-slate-300">Record</div>
+          <div className="mt-2 text-lg font-semibold">
+            W: {stats.wins} &nbsp; L: {stats.losses} &nbsp; D: {stats.draws}
+          </div>
+        </div>
+        <div className={`${card} text-center p-6`}>
+          <div className="text-sm text-slate-300">Mode</div>
+          <div className="mt-2 text-lg font-semibold">
+            {mode === "psyche" ? "Psyche" : "Random"}
+          </div>
+        </div>
+      </section>
+
+      {/* Mode selector */}
+      <section className={`${card} text-center p-6`}>
+        <div className="mb-2 text-sm text-slate-300">Choose Mode</div>
+        <div className="flex gap-4 justify-center">
+          <button
+            onClick={() => setMode("psyche")}
+            className={`px-6 py-2 rounded-xl font-semibold shadow transition ${
+              mode === "psyche"
+                ? "bg-emerald-400 text-slate-900"
+                : "bg-slate-800 hover:bg-slate-700"
+            }`}
+          >
+            Psyche
+          </button>
+          <button
+            onClick={() => setMode("random")}
+            className={`px-6 py-2 rounded-xl font-semibold shadow transition ${
+              mode === "random"
+                ? "bg-amber-400 text-slate-900"
+                : "bg-slate-800 hover:bg-slate-700"
+            }`}
+          >
+            Random
+          </button>
+        </div>
+      </section>
+
+      {/* Move buttons */}
+      <section className="grid grid-cols-3 gap-8">
+        {MOVES.map((m) => (
+          <button
+            key={m}
+            onClick={() => handlePlay(m)}
+            disabled={mode === "psyche" && !promptSatisfied}
+            className={`group aspect-square w-full rounded-3xl bg-white/80 text-slate-900 shadow-lg hover:shadow-2xl transition ${
+              mode === "psyche" && !promptSatisfied
+                ? "opacity-60 cursor-not-allowed"
+                : ""
+            }`}
+          >
+            <div className="w-full h-full flex flex-col items-center justify-center gap-3">
+              <div className="w-28 h-28 rounded-full bg-white shadow grid place-items-center">
+                <Image
+                  src={ICONS[m]}
+                  alt={m}
+                  width={96}
+                  height={96}
+                  className="object-contain select-none"
+                  draggable={false}
+                  priority
+                />
+              </div>
+              <div className="font-bold text-lg">{m}</div>
+            </div>
+          </button>
+        ))}
+      </section>
+
+      {/* Last round + history stay the same */}
+      {/* ... keep your last round + history sections as-is */}
+    </div>
+  </main>
+);
+}
